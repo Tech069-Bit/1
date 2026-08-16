@@ -1,0 +1,1204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>MailLogic - Rule Engine</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<link href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+<style>
+  body { font-family: 'Work Sans', sans-serif; }
+  .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+  .active-tab { color: #1a73e8; font-weight: 600; }
+  .hidden { display: none; }
+  .chip-x:hover { opacity: 0.7; cursor: pointer; }
+  #toast { transition: transform 0.25s ease, opacity 0.25s ease; }
+  .log-undone { opacity: 0.5; }
+  ::-webkit-scrollbar { width: 6px; }
+</style>
+</head>
+<body class="bg-[#f8fafb] text-[#1f1f1f] pb-20">
+
+<!-- Top App Bar -->
+<header class="sticky top-0 z-40 flex items-center justify-between h-14 px-4 bg-white border-b border-[#d8dadb]">
+  <div class="flex items-center gap-2">
+    <span class="material-symbols-outlined text-[#1a73e8]">mail</span>
+    <h1 class="text-xl font-bold text-[#1a73e8]">MailLogic</h1>
+  </div>
+  <div class="flex items-center gap-2">
+    <span id="conn-badge" class="text-[10px] font-bold uppercase tracking-wide text-amber-700 bg-amber-100 px-2 py-1 rounded-full">Demo data</span>
+    <button id="gmail-toggle-btn" class="text-xs font-semibold text-blue-600" onclick="App.gmailBadgeClick()">Connect Gmail</button>
+    <div class="w-8 h-8 rounded-full overflow-hidden border border-gray-200">
+      <img alt="Profile" class="w-full h-full object-cover" src="https://www.gstatic.com/labs-code/stitch/stitch-placeholder-300x300.svg"/>
+    </div>
+  </div>
+</header>
+
+<!-- Toast -->
+<div id="toast" class="fixed top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-[#1f1f1f] text-white text-sm rounded-lg shadow-lg opacity-0 pointer-events-none translate-y-[-8px]"></div>
+
+<!-- Connect Gmail Modal -->
+<div id="connect-modal" class="hidden fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-4">
+  <div class="bg-white rounded-xl w-full max-w-md p-5 space-y-4 max-h-[85vh] overflow-y-auto">
+    <div class="flex items-center justify-between">
+      <h3 class="text-lg font-bold">Connect Gmail</h3>
+      <button class="text-gray-400" onclick="App.closeConnectModal()"><span class="material-symbols-outlined">close</span></button>
+    </div>
+    <p class="text-sm text-gray-500">This app talks to Gmail directly from your browser via Google's own sign-in — there's no server in between. You'll need a free OAuth Client ID from Google Cloud Console (one-time setup):</p>
+    <ol class="text-xs text-gray-600 list-decimal pl-4 space-y-1.5">
+      <li>Create a project at <a class="text-blue-600 underline" href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">console.cloud.google.com</a>, then enable the <a class="text-blue-600 underline" href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" target="_blank" rel="noopener">Gmail API</a>.</li>
+      <li>Set up the <a class="text-blue-600 underline" href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener">OAuth consent screen</a> — choose <b>External</b> and add your own Google account as a <b>test user</b>.</li>
+      <li>Create an <a class="text-blue-600 underline" href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">OAuth Client ID</a> of type <b>Web application</b>.</li>
+      <li>Add the exact URL this page is running on as an <b>Authorized JavaScript origin</b> (must be served over http/https — opening the file directly won't work).</li>
+      <li>Paste the Client ID below.</li>
+    </ol>
+    <div>
+      <label class="block text-xs font-bold text-gray-500 uppercase mb-1">OAuth Client ID</label>
+      <input id="gmail-client-id-input" class="w-full p-3 bg-[#f8fafb] border border-[#d8dadb] rounded-lg text-sm focus:outline-blue-500" placeholder="xxxxxxxx.apps.googleusercontent.com" type="text"/>
+    </div>
+    <button class="w-full py-3 bg-[#1a73e8] text-white rounded-lg font-medium" onclick="App.saveClientIdAndConnect()">Save &amp; Connect</button>
+    <p class="text-[10px] text-gray-400">Requests the <span class="font-mono">gmail.modify</span> scope (Gmail has no narrower scope for applying labels) — but this app only ever reads mail and applies labels. It never archives, trashes, or marks anything read.</p>
+  </div>
+</div>
+
+<!-- Dashboard Screen -->
+<main class="p-4 space-y-6" id="screen-dashboard">
+  <section>
+    <h2 class="text-3xl font-bold">Overview</h2>
+    <p class="text-sm text-gray-500" id="dashboard-subtitle">Your inbox health at a glance. <span class="text-gray-400">Counts reflect the sample inbox below, not a real Gmail account.</span></p>
+  </section>
+  <button id="scan-btn" class="w-full flex items-center justify-center gap-2 py-3 bg-[#1a73e8] text-white rounded-lg font-medium shadow-sm active:scale-95 transition-transform" onclick="App.scanGmail()">
+    <span class="material-symbols-outlined" id="scan-icon">sync</span>
+    <span id="scan-label">Scan Gmail</span>
+  </button>
+  <div class="grid grid-cols-2 gap-4" id="dashboard-stats"></div>
+  <section class="space-y-3">
+    <h3 class="text-lg font-bold border-b border-[#d8dadb] pb-2">Recent Actions</h3>
+    <div class="space-y-2" id="dashboard-recent"></div>
+  </section>
+</main>
+
+<!-- Rules List / Builder Screen -->
+<main class="hidden p-4 space-y-6" id="screen-rules">
+  <div id="rules-list-view" class="space-y-4">
+    <section class="flex items-center justify-between">
+      <h2 class="text-3xl font-bold">Rules</h2>
+      <button class="px-4 py-2 bg-[#1a73e8] text-white rounded-full font-medium text-sm flex items-center gap-1" onclick="App.newRule()">
+        <span class="material-symbols-outlined text-base">add</span> New
+      </button>
+    </section>
+    <div class="space-y-3" id="rules-list"></div>
+  </div>
+
+  <div id="rule-editor-view" class="hidden space-y-6">
+    <section class="flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <button class="text-gray-500" onclick="App.cancelRuleEdit()"><span class="material-symbols-outlined">arrow_back</span></button>
+        <h2 class="text-2xl font-bold" id="rule-editor-title">New Rule</h2>
+      </div>
+      <button class="px-6 py-2 bg-[#1a73e8] text-white rounded-full font-medium text-sm" onclick="App.saveRule()">Save</button>
+    </section>
+    <div class="p-4 bg-white rounded-xl border border-[#d8dadb] space-y-4">
+      <div>
+        <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Rule Name</label>
+        <input id="rule-name-input" class="w-full p-3 bg-[#f8fafb] border border-[#d8dadb] rounded-lg text-sm focus:outline-blue-500" placeholder="e.g., Forward Invoices to Billing" type="text"/>
+      </div>
+      <div>
+        <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Execution Priority</label>
+        <div class="flex gap-4" id="rule-priority-radios"></div>
+      </div>
+    </div>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="px-2 py-1 bg-blue-600 text-white text-xs font-bold rounded">IF</span>
+          <h3 class="text-lg font-bold">When email arrives</h3>
+        </div>
+        <button class="text-xs font-medium text-blue-600 flex items-center gap-1" onclick="App.addCondition()">
+          <span class="material-symbols-outlined text-sm">add</span> Add condition
+        </button>
+      </div>
+      <div class="flex items-center gap-2 text-xs text-gray-500" id="rule-condition-logic"></div>
+      <div class="space-y-3" id="rule-conditions"></div>
+    </section>
+
+    <section class="space-y-4">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="px-2 py-1 bg-gray-600 text-white text-xs font-bold rounded">THEN</span>
+          <h3 class="text-lg font-bold">Take these actions</h3>
+        </div>
+        <button class="text-xs font-medium text-blue-600 flex items-center gap-1" onclick="App.addAction()">
+          <span class="material-symbols-outlined text-sm">add</span> Add action
+        </button>
+      </div>
+      <div class="space-y-3" id="rule-actions"></div>
+    </section>
+  </div>
+</main>
+
+<!-- Preview Screen -->
+<main class="hidden p-4 space-y-6" id="screen-preview">
+  <div id="preview-empty" class="hidden space-y-3 text-center py-16">
+    <span class="material-symbols-outlined text-5xl text-gray-300">search_off</span>
+    <p class="text-gray-500 text-sm">No scan yet. Run "Scan Gmail" from the Dashboard to preview matches.</p>
+  </div>
+  <div id="preview-content" class="hidden space-y-6">
+    <div class="flex items-center gap-2 text-blue-600 font-bold text-xs uppercase tracking-wider">
+      <span class="material-symbols-outlined text-sm">check_circle</span>
+      Scan Complete
+    </div>
+    <h2 class="text-3xl font-bold">Bulk Preview</h2>
+    <p class="text-sm text-gray-500">Review the categorization before applying rules.</p>
+    <div class="p-10 bg-white rounded-xl border border-[#d8dadb] text-center space-y-2">
+      <div class="text-6xl font-bold text-[#1a73e8]" id="preview-total">0</div>
+      <div class="text-gray-500 text-sm font-medium">Emails matched by your rules</div>
+      <div class="text-xs text-gray-400" id="preview-unmatched"></div>
+    </div>
+    <section class="space-y-4">
+      <h3 class="text-lg font-bold">Category Breakdown</h3>
+      <div class="grid grid-cols-2 gap-4" id="preview-breakdown"></div>
+    </section>
+    <div class="h-4"></div>
+  </div>
+  <div id="preview-actions" class="hidden fixed bottom-16 left-0 w-full p-4 bg-white border-t border-[#d8dadb] flex gap-3 z-30">
+    <button class="flex-1 py-3 border border-[#d8dadb] rounded-lg font-medium text-sm" onclick="App.cancelPreview()">Cancel</button>
+    <button class="flex-1 py-3 bg-[#1a73e8] text-white rounded-lg font-medium text-sm" onclick="App.applyAll()">Apply All</button>
+  </div>
+</main>
+
+<!-- Logs Screen -->
+<main class="hidden p-4 space-y-6" id="screen-logs">
+  <section>
+    <h2 class="text-3xl font-bold">Activity Log</h2>
+    <p class="text-sm text-gray-500">Recent automated actions taken by your rules.</p>
+  </section>
+  <div class="space-y-4" id="logs-list"></div>
+  <div id="logs-empty" class="hidden text-center py-16 space-y-2">
+    <span class="material-symbols-outlined text-5xl text-gray-300">history</span>
+    <p class="text-gray-500 text-sm">No activity yet. Apply a scan to see actions here.</p>
+  </div>
+</main>
+
+<!-- Bottom Navigation -->
+<nav class="fixed bottom-0 left-0 w-full flex justify-around items-center h-16 bg-white border-t border-[#d8dadb] z-50">
+  <button class="flex flex-col items-center justify-center w-full active-tab" id="nav-dashboard" onclick="App.showScreen('dashboard')">
+    <span class="material-symbols-outlined">dashboard</span>
+    <span class="text-[10px]">Dashboard</span>
+  </button>
+  <button class="flex flex-col items-center justify-center w-full text-gray-500" id="nav-rules" onclick="App.showScreen('rules')">
+    <span class="material-symbols-outlined">rule</span>
+    <span class="text-[10px]">Rules</span>
+  </button>
+  <button class="flex flex-col items-center justify-center w-full text-gray-500" id="nav-preview" onclick="App.showScreen('preview')">
+    <span class="material-symbols-outlined">batch_prediction</span>
+    <span class="text-[10px]">Preview</span>
+  </button>
+  <button class="flex flex-col items-center justify-center w-full text-gray-500" id="nav-logs" onclick="App.showScreen('logs')">
+    <span class="material-symbols-outlined">history</span>
+    <span class="text-[10px]">Logs</span>
+  </button>
+</nav>
+
+<script>
+const App = (() => {
+
+  // ---------- Constants ----------
+  const FIELD_LABELS = { sender: 'Sender', subject: 'Subject', body: 'Body' };
+  const OPERATOR_LABELS = { contains: 'contains', not_contains: 'does not contain', equals: 'equals exactly', starts_with: 'starts with' };
+  const ACTION_LABELS = { label: 'Apply Label' };
+  const ACTION_ICONS = { label: 'label' };
+  const PRIORITY_WEIGHT = { High: 0, Normal: 1, Low: 2 };
+  const STORAGE_KEY = 'app-state-v1';
+  const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.modify';
+  const PROCESSED_LABEL = 'MailLogic-Processed';
+  const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/';
+
+  // ---------- State ----------
+  let state = null;   // persisted: { rules, emails, logs, mailPool }
+  let draftRule = null; // in-memory while editing
+  let editingRuleId = null;
+  let toastTimer = null;
+
+  // Gmail session state — intentionally NOT persisted to storage. The access
+  // token is short-lived (~1hr) and re-requested each session via Google's
+  // sign-in; only the Client ID and connected email are saved.
+  let tokenClient = null;
+  let accessToken = null;
+  let tokenPromiseResolvers = null;
+  let labelIdCache = {};
+  let labelsListed = false;
+  let gmailMsgCache = {};
+
+  function uid(prefix) {
+    return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  }
+
+  // ---------- Seed data ----------
+  function seedEmails() {
+    const organizedSeed = [
+      { sender: 'billing@amazon.com', subject: 'Your Amazon.com order has shipped', snippet: 'Your package is on its way and will arrive Thursday.', labels: ['Shopping'] },
+      { sender: 'receipts@uber.com', subject: 'Your Friday trip receipt', snippet: 'Thanks for riding with Uber. Total: $14.32', labels: ['Shopping'], archived: true },
+      { sender: 'invoices@stripe.com', subject: 'Your invoice from Stripe', snippet: 'Your invoice #4471 is ready to view.', labels: ['Finance'], archived: true },
+      { sender: 'billing@netflix.com', subject: 'Your receipt from Netflix', snippet: 'Payment received, thanks for being a member.', labels: ['Finance'], archived: true },
+      { sender: 'sarah.chen@acmecorp.com', subject: 'Q3 planning doc', snippet: 'Can you take a look before Friday standup?', labels: ['Work'] },
+      { sender: 'mike.torres@acmecorp.com', subject: 'Re: budget review', snippet: 'Numbers look good, sending to finance now.', labels: ['Work'] },
+      { sender: 'newsletter@techcrunch.com', subject: 'Daily Crunch: markets rally', snippet: "Here's what you missed in tech today.", labels: ['Newsletters'], archived: true, read: true },
+      { sender: 'promotions@zara.com', subject: 'New arrivals just for you', snippet: 'Fresh fall styles are here.', labels: ['Newsletters'], archived: true, read: true },
+    ];
+    const unorganizedSeed = [
+      { sender: 'billing@amazon.com', subject: 'Your Amazon.com order has shipped', snippet: 'Package #4482 will arrive tomorrow by 8pm.' },
+      { sender: 'deals@ebay.com', subject: 'Flash sale ends tonight', snippet: 'Up to 60% off electronics, ends midnight.' },
+      { sender: 'noreply@linkedin.com', subject: 'You have 3 new notifications', snippet: 'People are talking about your recent post.' },
+      { sender: 'jenny@acmecorp.com', subject: 'Lunch tomorrow?', snippet: 'Thinking the new ramen place near the office.' },
+      { sender: 'alerts@chase.com', subject: 'Your statement is ready', snippet: 'Your July statement is now available to view.' },
+      { sender: 'noreply@github.com', subject: '[stitch/rules-engine] New pull request', snippet: 'alice opened a pull request: Fix condition parser' },
+      { sender: 'support@dropbox.com', subject: 'Your storage is almost full', snippet: "You're using 94% of your storage plan." },
+      { sender: 'promotions@zara.com', subject: 'Final hours: extra 20% off sale', snippet: 'Use code EXTRA20 at checkout.' },
+      { sender: 'billing@netflix.com', subject: 'Your receipt from Netflix', snippet: 'Payment received for your monthly plan.' },
+      { sender: 'newsletter@techcrunch.com', subject: 'Daily Crunch: funding roundup', snippet: "Today's biggest raises and what they mean." },
+      { sender: 'mike.torres@acmecorp.com', subject: 'Server migration window', snippet: 'Maintenance is scheduled for Saturday 2am.' },
+      { sender: 'invoices@stripe.com', subject: 'Your invoice from Stripe', snippet: 'Invoice #4502 is ready, due in 14 days.' },
+    ];
+    const pool = [
+      { sender: 'noreply@medium.com', subject: 'Trending on Medium this week', snippet: 'Stories picked based on your reading history.' },
+      { sender: 'receipts@doordash.com', subject: 'Your order from Doordash', snippet: 'Your food is on its way, ETA 6:40pm.' },
+      { sender: 'sarah.chen@acmecorp.com', subject: 'Design review moved to 3pm', snippet: 'Same room, just pushed an hour.' },
+      { sender: 'team@slack.com', subject: 'Your weekly workspace digest', snippet: '212 messages across 6 channels this week.' },
+      { sender: 'billing@amazon.com', subject: 'Refund issued for your return', snippet: 'Your refund of $23.10 has been processed.' },
+      { sender: 'promotions@nike.com', subject: 'Members get early access', snippet: 'New drop unlocks in 2 hours for members.' },
+      { sender: 'alerts@chase.com', subject: 'Unusual sign-in detected', snippet: 'We noticed a new sign-in from a Windows device.' },
+      { sender: 'noreply@github.com', subject: '[stitch/rules-engine] Build failed', snippet: 'Workflow "CI" failed on branch main.' },
+      { sender: 'deals@ebay.com', subject: 'Price drop on an item you viewed', snippet: 'The item in your watchlist just got cheaper.' },
+      { sender: 'jenny@acmecorp.com', subject: 'Thanks for yesterday', snippet: 'The client loved the walkthrough, nice work.' },
+    ];
+
+    let emails = [];
+    organizedSeed.forEach(e => emails.push(makeEmail(e, true)));
+    unorganizedSeed.forEach(e => emails.push(makeEmail(e, false)));
+    return { emails, pool: pool.map(e => makeEmail(e, false, true)) };
+  }
+
+  function makeEmail(partial, organized, isPoolTemplate) {
+    return {
+      id: isPoolTemplate ? null : uid('em'),
+      sender: partial.sender,
+      subject: partial.subject,
+      snippet: partial.snippet,
+      date: partial.date || relativeRecentTime(),
+      read: partial.read !== undefined ? partial.read : Math.random() > 0.4,
+      labels: partial.labels ? [...partial.labels] : [],
+      archived: !!partial.archived,
+      deleted: false,
+      organized: !!organized,
+      _template: isPoolTemplate ? { sender: partial.sender, subject: partial.subject, snippet: partial.snippet } : undefined
+    };
+  }
+
+  function relativeRecentTime() {
+    const hours = Math.floor(Math.random() * 30) + 1;
+    if (hours < 24) return hours + 'h ago';
+    return Math.floor(hours / 24) + 'd ago';
+  }
+
+  function seedRules() {
+    return [
+      {
+        id: uid('rule'), name: 'Vendor Sorting', priority: 'Normal', enabled: true, conditionLogic: 'all',
+        conditions: [{ field: 'sender', operator: 'contains', value: 'amazon' }],
+        actions: [{ type: 'label', value: 'Shopping' }]
+      },
+      {
+        id: uid('rule'), name: 'Financial Archive', priority: 'High', enabled: true, conditionLogic: 'all',
+        conditions: [{ field: 'sender', operator: 'contains', value: 'billing@' }],
+        actions: [{ type: 'label', value: 'Finance' }]
+      },
+      {
+        id: uid('rule'), name: 'Promo Cleanser', priority: 'Low', enabled: true, conditionLogic: 'all',
+        conditions: [{ field: 'sender', operator: 'contains', value: 'promotions@' }],
+        actions: [{ type: 'label', value: 'Newsletters' }]
+      }
+    ];
+  }
+
+  function seedLogs(emails) {
+    const amazon = emails.find(e => e.sender === 'billing@amazon.com' && e.organized);
+    const uber = emails.find(e => e.sender === 'receipts@uber.com');
+    const logs = [];
+    if (amazon) {
+      logs.push({ id: uid('log'), timestamp: Date.now() - 1000 * 60 * 42, ruleName: 'Vendor Sorting', summary: 'Labeled Amazon as Shopping', count: 1, undone: false, undo: [snapshotBefore(amazon, { labels: [] })] });
+    }
+    if (uber) {
+      logs.push({ id: uid('log'), timestamp: Date.now() - 1000 * 60 * 87, ruleName: 'Weekly Cleanup', summary: 'Archived 1 receipt', count: 1, undone: false, undo: [snapshotBefore(uber, { archived: false })] });
+    }
+    return logs;
+  }
+
+  function snapshotBefore(email, overrides) {
+    return { id: email.id, labels: [...email.labels], archived: email.archived, deleted: email.deleted, read: email.read, organized: email.organized, ...overrides, id: email.id };
+  }
+
+  // ---------- Persistence ----------
+  async function loadState() {
+    try {
+      const res = await window.storage.get(STORAGE_KEY, false);
+      if (res && res.value) {
+        state = JSON.parse(res.value);
+        if (!state.mode) state.mode = 'demo';
+        if (!state.gmail) state.gmail = { clientId: '', connectedEmail: null, messagesTotal: null, unreadTotal: null };
+        return;
+      }
+    } catch (e) { /* not found yet */ }
+    const { emails, pool } = seedEmails();
+    state = { rules: seedRules(), emails, mailPool: pool, logs: [], lastScan: null, mode: 'demo', gmail: { clientId: '', connectedEmail: null, messagesTotal: null, unreadTotal: null } };
+    state.logs = seedLogs(state.emails);
+    await saveState();
+  }
+
+  async function saveState() {
+    try {
+      await window.storage.set(STORAGE_KEY, JSON.stringify(state), false);
+    } catch (e) {
+      console.error('Storage save failed', e);
+      showToast('Could not save — changes may not persist');
+    }
+  }
+
+  // ---------- Gmail auth ----------
+  function ensureTokenClient() {
+    if (tokenClient) return tokenClient;
+    if (!window.google || !google.accounts || !google.accounts.oauth2) {
+      throw new Error('Google sign-in library did not load — check your connection and reload the page.');
+    }
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: state.gmail.clientId,
+      scope: GMAIL_SCOPE,
+      callback: (resp) => {
+        const resolvers = tokenPromiseResolvers;
+        tokenPromiseResolvers = null;
+        if (!resolvers) return;
+        if (resp.error) resolvers.reject(resp);
+        else { accessToken = resp.access_token; resolvers.resolve(resp); }
+      }
+    });
+    return tokenClient;
+  }
+
+  function requestAccessToken(interactive) {
+    return new Promise((resolve, reject) => {
+      try {
+        const client = ensureTokenClient();
+        tokenPromiseResolvers = { resolve, reject };
+        client.requestAccessToken({ prompt: interactive ? 'consent' : '' });
+      } catch (e) { reject(e); }
+    });
+  }
+
+  async function ensureAccessToken() {
+    if (!accessToken) await requestAccessToken(true);
+    return accessToken;
+  }
+
+  async function gmailApiFetch(path, options, retried) {
+    await ensureAccessToken();
+    const res = await fetch(GMAIL_API + path, {
+      ...options,
+      headers: { 'Content-Type': 'application/json', ...(options && options.headers), Authorization: 'Bearer ' + accessToken }
+    });
+    if (res.status === 401 && !retried) {
+      accessToken = null; // token expired/revoked — force a fresh one and retry once
+      return gmailApiFetch(path, options, true);
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error('Gmail API error ' + res.status + ': ' + body.slice(0, 200));
+    }
+    return res.status === 204 ? null : res.json();
+  }
+
+  async function ensureLabelId(name) {
+    if (!labelsListed) {
+      const list = await gmailApiFetch('users/me/labels', { method: 'GET' });
+      (list.labels || []).forEach(l => { labelIdCache[l.name] = l.id; });
+      labelsListed = true;
+    }
+    if (labelIdCache[name]) return labelIdCache[name];
+    const created = await gmailApiFetch('users/me/labels', {
+      method: 'POST',
+      body: JSON.stringify({ name, labelListVisibility: 'labelShow', messageListVisibility: 'show' })
+    });
+    labelIdCache[name] = created.id;
+    return created.id;
+  }
+
+  async function refreshGmailStats() {
+    try {
+      const profile = await gmailApiFetch('users/me/profile', { method: 'GET' });
+      const unread = await gmailApiFetch('users/me/labels/UNREAD', { method: 'GET' });
+      state.gmail.messagesTotal = profile.messagesTotal;
+      state.gmail.unreadTotal = unread.messagesUnread;
+      await saveState();
+    } catch (e) { console.error('Could not refresh Gmail stats', e); }
+  }
+
+  async function connectGmail() {
+    if (!state.gmail.clientId) { openConnectModal(); return; }
+    try {
+      showToast('Opening Google sign-in…');
+      tokenClient = null; // rebuild in case client ID changed
+      await requestAccessToken(true);
+      const profile = await gmailApiFetch('users/me/profile', { method: 'GET' });
+      state.gmail.connectedEmail = profile.emailAddress;
+      state.mode = 'gmail';
+      labelIdCache = {};
+      labelsListed = false;
+      await saveState();
+      await refreshGmailStats();
+      render();
+      showToast('Connected as ' + profile.emailAddress);
+    } catch (e) {
+      console.error(e);
+      showToast('Could not connect: ' + (e.message || e.error || 'unknown error'));
+    }
+  }
+
+  function disconnectGmail() {
+    if (accessToken && window.google && google.accounts && google.accounts.oauth2) {
+      google.accounts.oauth2.revoke(accessToken, () => {});
+    }
+    accessToken = null;
+    tokenClient = null;
+    labelIdCache = {};
+    labelsListed = false;
+    state.mode = 'demo';
+    state.gmail.connectedEmail = null;
+    saveState();
+    render();
+    showScreen('dashboard');
+    showToast('Disconnected from Gmail');
+  }
+
+  function gmailBadgeClick() {
+    if (state.mode === 'gmail') disconnectGmail();
+    else connectGmail();
+  }
+
+  function openConnectModal() {
+    document.getElementById('gmail-client-id-input').value = state.gmail.clientId || '';
+    document.getElementById('connect-modal').classList.remove('hidden');
+  }
+  function closeConnectModal() { document.getElementById('connect-modal').classList.add('hidden'); }
+
+  async function saveClientIdAndConnect() {
+    const id = document.getElementById('gmail-client-id-input').value.trim();
+    if (!id) { showToast('Paste your OAuth Client ID first'); return; }
+    state.gmail.clientId = id;
+    tokenClient = null;
+    accessToken = null;
+    await saveState();
+    closeConnectModal();
+    await connectGmail();
+  }
+
+  // ---------- Gmail rule engine (live) ----------
+  function gmailMsgToEmail(msg) {
+    const headers = (msg.payload && msg.payload.headers) || [];
+    const get = (name) => (headers.find(h => h.name.toLowerCase() === name.toLowerCase()) || {}).value || '';
+    return {
+      id: msg.id,
+      sender: get('From'),
+      subject: get('Subject'),
+      snippet: msg.snippet || '',
+      labelIds: msg.labelIds || [],
+      read: !(msg.labelIds || []).includes('UNREAD')
+    };
+  }
+
+  async function fetchGmailCandidates(max) {
+    const q = encodeURIComponent('-label:' + PROCESSED_LABEL);
+    const listRes = await gmailApiFetch(`users/me/messages?maxResults=${max}&labelIds=INBOX&q=${q}`, { method: 'GET' });
+    const ids = (listRes.messages || []).map(m => m.id);
+    const details = await Promise.all(ids.map(id =>
+      gmailApiFetch(`users/me/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject`, { method: 'GET' })
+    ));
+    return details;
+  }
+
+  async function runScanGmail() {
+    const rawMsgs = await fetchGmailCandidates(20);
+    gmailMsgCache = {};
+    const candidates = rawMsgs.map(gmailMsgToEmail);
+    candidates.forEach(c => { gmailMsgCache[c.id] = c; });
+    const rules = enabledRulesSorted();
+    const matches = {};
+    const matchedIds = new Set();
+    candidates.forEach(email => {
+      for (const rule of rules) {
+        if (ruleMatches(rule, email)) {
+          if (!matches[rule.id]) matches[rule.id] = { rule, emailIds: [] };
+          matches[rule.id].emailIds.push(email.id);
+          matchedIds.add(email.id);
+          break;
+        }
+      }
+    });
+    state.lastScan = {
+      source: 'gmail', timestamp: Date.now(),
+      candidateCount: candidates.length,
+      matchedCount: matchedIds.size,
+      unmatchedCount: candidates.length - matchedIds.size,
+      matches
+    };
+  }
+
+  async function applyAllGmail() {
+    if (!state.lastScan) return;
+    const processedLabelId = await ensureLabelId(PROCESSED_LABEL);
+    const matchesList = Object.values(state.lastScan.matches);
+    const newLogs = [];
+    for (const { rule, emailIds } of matchesList) {
+      const undoStates = [];
+      for (const id of emailIds) {
+        const add = new Set([processedLabelId]);
+        for (const action of rule.actions) {
+          if (action.type === 'label' && action.value) add.add(await ensureLabelId(action.value));
+        }
+        const addLabelIds = [...add];
+        const removeLabelIds = [];
+        await gmailApiFetch(`users/me/messages/${id}/modify`, {
+          method: 'POST',
+          body: JSON.stringify({ addLabelIds, removeLabelIds })
+        });
+        undoStates.push({ id, added: addLabelIds, removed: removeLabelIds });
+      }
+      newLogs.push({
+        id: uid('log'), timestamp: Date.now(), source: 'gmail', ruleName: rule.name,
+        summary: summarizeActions(rule, emailIds.length), count: emailIds.length,
+        undone: false, undo: undoStates
+      });
+    }
+    state.logs.unshift(...newLogs);
+    state.lastScan = null;
+    await saveState();
+    await refreshGmailStats();
+  }
+
+  async function undoLogGmail(log) {
+    for (const u of log.undo) {
+      await gmailApiFetch(`users/me/messages/${u.id}/modify`, {
+        method: 'POST',
+        body: JSON.stringify({ addLabelIds: u.removed, removeLabelIds: u.added })
+      });
+    }
+    log.undone = true;
+    await saveState();
+    await refreshGmailStats();
+  }
+
+  // ---------- Rule engine ----------
+  function fieldValue(email, field) {
+    if (field === 'sender') return email.sender || '';
+    if (field === 'subject') return email.subject || '';
+    if (field === 'body') return email.snippet || '';
+    return '';
+  }
+
+  function conditionMatches(email, cond) {
+    const a = fieldValue(email, cond.field).toLowerCase();
+    const b = (cond.value || '').toLowerCase();
+    switch (cond.operator) {
+      case 'contains': return b.length > 0 && a.includes(b);
+      case 'not_contains': return b.length === 0 || !a.includes(b);
+      case 'equals': return a === b;
+      case 'starts_with': return b.length > 0 && a.startsWith(b);
+      default: return false;
+    }
+  }
+
+  function ruleMatches(rule, email) {
+    if (!rule.conditions.length) return false;
+    return rule.conditionLogic === 'any'
+      ? rule.conditions.some(c => conditionMatches(email, c))
+      : rule.conditions.every(c => conditionMatches(email, c));
+  }
+
+  function enabledRulesSorted() {
+    return state.rules.filter(r => r.enabled).slice().sort((a, b) => PRIORITY_WEIGHT[a.priority] - PRIORITY_WEIGHT[b.priority]);
+  }
+
+  function pullNewMail(n) {
+    let pulled = 0;
+    while (pulled < n && state.mailPool.length) {
+      const tpl = state.mailPool.shift();
+      const email = makeEmail({ ...tpl._template, read: Math.random() > 0.5 }, false);
+      state.emails.push(email);
+      pulled++;
+    }
+    return pulled;
+  }
+
+  function runScan() {
+    const pulled = pullNewMail(3);
+    const candidates = state.emails.filter(e => !e.organized && !e.deleted);
+    const rules = enabledRulesSorted();
+    const matches = {}; // ruleId -> {rule, emailIds}
+    const matchedIds = new Set();
+    candidates.forEach(email => {
+      // Priority is exclusive: the first matching rule (in priority order) wins,
+      // and lower-priority rules are skipped for this email. This avoids an
+      // email being double-processed by two rules with conflicting actions.
+      for (const rule of rules) {
+        if (ruleMatches(rule, email)) {
+          if (!matches[rule.id]) matches[rule.id] = { rule, emailIds: [] };
+          matches[rule.id].emailIds.push(email.id);
+          matchedIds.add(email.id);
+          break;
+        }
+      }
+    });
+    state.lastScan = {
+      timestamp: Date.now(),
+      candidateCount: candidates.length,
+      matchedCount: matchedIds.size,
+      unmatchedCount: candidates.length - matchedIds.size,
+      matches
+    };
+    return pulled;
+  }
+
+  function summarizeActions(rule, count) {
+    const labels = rule.actions.filter(a => a.type === 'label' && a.value).map(a => a.value);
+    if (labels.length) return 'Labeled ' + count + ' as ' + labels.join(', ');
+    return 'Updated ' + count + ' email' + (count === 1 ? '' : 's');
+  }
+
+  function applyAll() {
+    if (state.mode === 'gmail') { applyAllGmailFlow(); return; }
+    if (!state.lastScan) return;
+    const matchesList = Object.values(state.lastScan.matches);
+
+    // Snapshot every affected email exactly once, before ANY rule mutates
+    // anything. Taking snapshots mid-loop (rule by rule) is unsafe: if an
+    // email were ever matched by more than one rule, a later rule's
+    // "before" snapshot would actually be an earlier rule's "after" state,
+    // making undo order-dependent and unreliable.
+    const snapshotMap = new Map();
+    matchesList.forEach(({ emailIds }) => {
+      emailIds.forEach(id => {
+        if (!snapshotMap.has(id)) {
+          const email = state.emails.find(e => e.id === id);
+          if (email) snapshotMap.set(id, snapshotBefore(email, {}));
+        }
+      });
+    });
+
+    const newLogs = [];
+    matchesList.forEach(({ rule, emailIds }) => {
+      const undoStates = [];
+      emailIds.forEach(id => {
+        const email = state.emails.find(e => e.id === id);
+        if (!email) return;
+        undoStates.push(snapshotMap.get(id));
+        rule.actions.forEach(action => {
+          if (action.type === 'label') { if (action.value && !email.labels.includes(action.value)) email.labels.push(action.value); }
+        });
+        email.organized = true;
+      });
+      newLogs.push({
+        id: uid('log'), timestamp: Date.now(), ruleName: rule.name,
+        summary: summarizeActions(rule, emailIds.length), count: emailIds.length,
+        undone: false, undo: undoStates
+      });
+    });
+    state.logs.unshift(...newLogs);
+    state.lastScan = null;
+    saveState();
+    render();
+    showScreen('logs');
+    showToast('Applied ' + newLogs.reduce((s, l) => s + l.count, 0) + ' actions');
+  }
+
+  async function applyAllGmailFlow() {
+    if (!state.lastScan) return;
+    try {
+      showToast('Applying changes in Gmail…');
+      await applyAllGmail();
+      render();
+      showScreen('logs');
+      showToast('Applied changes in Gmail');
+    } catch (e) {
+      console.error(e);
+      showToast('Apply failed: ' + (e.message || 'unknown error'));
+    }
+  }
+
+  function undoLog(logId) {
+    const log = state.logs.find(l => l.id === logId);
+    if (!log || log.undone) return;
+    if (log.source === 'gmail') { undoLogGmailFlow(log); return; }
+    log.undo.forEach(prev => {
+      const email = state.emails.find(e => e.id === prev.id);
+      if (!email) return;
+      email.labels = [...prev.labels];
+      email.archived = prev.archived;
+      email.deleted = prev.deleted;
+      email.read = prev.read;
+      email.organized = prev.organized;
+    });
+    log.undone = true;
+    saveState();
+    render();
+    showToast('Undone: ' + log.summary);
+  }
+
+  async function undoLogGmailFlow(log) {
+    try {
+      showToast('Undoing in Gmail…');
+      await undoLogGmail(log);
+      render();
+      showToast('Undone: ' + log.summary);
+    } catch (e) {
+      console.error(e);
+      showToast('Undo failed: ' + (e.message || 'unknown error'));
+    }
+  }
+
+  // ---------- Rendering ----------
+  function computeStats() {
+    const active = state.emails.filter(e => !e.deleted);
+    return {
+      total: active.length,
+      unread: active.filter(e => !e.read).length,
+      organized: active.filter(e => e.organized).length,
+      unorganized: active.filter(e => !e.organized).length
+    };
+  }
+
+  function renderDashboard() {
+    const subtitle = document.getElementById('dashboard-subtitle');
+    if (state.mode === 'gmail') {
+      subtitle.innerHTML = `Live view of <span class="font-medium text-gray-700">${escapeHtml(state.gmail.connectedEmail || 'your Gmail account')}</span>.`;
+      document.getElementById('dashboard-stats').innerHTML = `
+        <div class="p-4 bg-white rounded-xl border border-[#d8dadb]">
+          <div class="flex items-center gap-2 text-gray-500 mb-2"><span class="material-symbols-outlined text-sm">inventory_2</span><span class="text-xs font-medium uppercase">Mailbox Total</span></div>
+          <div class="text-2xl font-semibold">${state.gmail.messagesTotal ?? '—'}</div>
+        </div>
+        <div class="p-4 bg-red-50 rounded-xl border border-red-100">
+          <div class="flex items-center gap-2 text-red-600 mb-2"><span class="material-symbols-outlined text-sm">mark_as_unread</span><span class="text-xs font-medium uppercase">Unread</span></div>
+          <div class="text-2xl font-semibold text-red-700">${state.gmail.unreadTotal ?? '—'}</div>
+        </div>
+        <div class="p-4 bg-white rounded-xl border border-[#d8dadb]">
+          <div class="flex items-center gap-2 text-gray-500 mb-2"><span class="material-symbols-outlined text-sm">rule</span><span class="text-xs font-medium uppercase">Active Rules</span></div>
+          <div class="text-2xl font-semibold">${state.rules.filter(r => r.enabled).length}</div>
+        </div>
+        <div class="p-4 bg-white rounded-xl border border-[#d8dadb]">
+          <div class="flex items-center gap-2 text-gray-500 mb-2"><span class="material-symbols-outlined text-sm">batch_prediction</span><span class="text-xs font-medium uppercase">Last Scan Matched</span></div>
+          <div class="text-2xl font-semibold">${state.lastScan ? state.lastScan.matchedCount : 0}</div>
+        </div>`;
+    } else {
+      subtitle.innerHTML = 'Your inbox health at a glance. <span class="text-gray-400">Counts reflect the sample inbox below, not a real Gmail account.</span>';
+      const s = computeStats();
+      document.getElementById('dashboard-stats').innerHTML = `
+        <div class="p-4 bg-white rounded-xl border border-[#d8dadb]">
+          <div class="flex items-center gap-2 text-gray-500 mb-2"><span class="material-symbols-outlined text-sm">inventory_2</span><span class="text-xs font-medium uppercase">Total Emails</span></div>
+          <div class="text-2xl font-semibold">${s.total}</div>
+        </div>
+        <div class="p-4 bg-red-50 rounded-xl border border-red-100">
+          <div class="flex items-center gap-2 text-red-600 mb-2"><span class="material-symbols-outlined text-sm">mark_as_unread</span><span class="text-xs font-medium uppercase">Unread</span></div>
+          <div class="text-2xl font-semibold text-red-700">${s.unread}</div>
+        </div>
+        <div class="p-4 bg-white rounded-xl border border-[#d8dadb]">
+          <div class="flex items-center gap-2 text-gray-500 mb-2"><span class="material-symbols-outlined text-sm">folder_special</span><span class="text-xs font-medium uppercase">Organized</span></div>
+          <div class="text-2xl font-semibold">${s.organized}</div>
+        </div>
+        <div class="p-4 bg-white rounded-xl border border-[#d8dadb]">
+          <div class="flex items-center gap-2 text-gray-500 mb-2"><span class="material-symbols-outlined text-sm">rule</span><span class="text-xs font-medium uppercase">Unorganized</span></div>
+          <div class="text-2xl font-semibold text-gray-600">${s.unorganized}</div>
+        </div>`;
+    }
+
+    const recent = state.logs.slice(0, 3);
+    const box = document.getElementById('dashboard-recent');
+    if (!recent.length) {
+      box.innerHTML = `<div class="text-sm text-gray-400 italic py-4 text-center">No actions yet — run a scan to get started.</div>`;
+    } else {
+      box.innerHTML = recent.map(l => `
+        <div class="flex items-center justify-between p-3 bg-white rounded-lg border border-[#d8dadb] ${l.undone ? 'log-undone' : ''}">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
+              <span class="material-symbols-outlined text-blue-600">${l.undone ? 'undo' : 'bolt'}</span>
+            </div>
+            <div>
+              <div class="text-sm font-medium">${escapeHtml(l.summary)}${l.undone ? ' <span class="text-xs text-gray-400">(undone)</span>' : ''}</div>
+              <div class="text-xs text-gray-400 italic">Rule: "${escapeHtml(l.ruleName)}"</div>
+            </div>
+          </div>
+          <div class="text-sm font-semibold text-gray-600">${l.count}</div>
+        </div>`).join('');
+    }
+  }
+
+  function renderRulesList() {
+    const box = document.getElementById('rules-list');
+    if (!state.rules.length) {
+      box.innerHTML = `<div class="text-center py-16 text-gray-400 text-sm">No rules yet. Tap "New" to create one.</div>`;
+      return;
+    }
+    box.innerHTML = state.rules.map(r => {
+      const joiner = r.conditionLogic === 'any' ? ' OR ' : ' AND ';
+      const condSummary = r.conditions.map(c => `${FIELD_LABELS[c.field]} ${OPERATOR_LABELS[c.operator]} "${escapeHtml(c.value)}"`).join(joiner);
+      const actionChips = r.actions.map(a => `<span class="text-[10px] font-semibold px-2 py-0.5 rounded bg-gray-100 text-gray-600">${ACTION_LABELS[a.type]}${a.value ? ': ' + escapeHtml(a.value) : ''}</span>`).join(' ');
+      return `
+      <div class="p-4 bg-white rounded-lg border border-[#d8dadb] border-l-4 ${r.enabled ? 'border-l-blue-600' : 'border-l-gray-300'} space-y-2">
+        <div class="flex items-start justify-between">
+          <div>
+            <div class="font-bold text-sm flex items-center gap-2">${escapeHtml(r.name)} <span class="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">${r.priority}</span></div>
+            <div class="text-xs text-gray-500 mt-1">${condSummary || '<span class="italic">No conditions</span>'}</div>
+          </div>
+          <button class="shrink-0" onclick="App.toggleRule('${r.id}')" title="${r.enabled ? 'Disable' : 'Enable'}">
+            <span class="material-symbols-outlined ${r.enabled ? 'text-blue-600' : 'text-gray-300'}">${r.enabled ? 'toggle_on' : 'toggle_off'}</span>
+          </button>
+        </div>
+        <div class="flex flex-wrap gap-1">${actionChips}</div>
+        <div class="flex gap-3 pt-1">
+          <button class="text-xs font-medium text-blue-600" onclick="App.editRule('${r.id}')">Edit</button>
+          <button class="text-xs font-medium text-red-600" onclick="App.deleteRule('${r.id}')">Delete</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function renderPreview() {
+    const empty = document.getElementById('preview-empty');
+    const content = document.getElementById('preview-content');
+    const actions = document.getElementById('preview-actions');
+    if (!state.lastScan) {
+      empty.classList.remove('hidden');
+      content.classList.add('hidden');
+      actions.classList.add('hidden');
+      return;
+    }
+    empty.classList.add('hidden');
+    content.classList.remove('hidden');
+    actions.classList.remove('hidden');
+    document.getElementById('preview-total').textContent = state.lastScan.matchedCount;
+    document.getElementById('preview-unmatched').textContent = state.lastScan.unmatchedCount > 0
+      ? state.lastScan.unmatchedCount + ' email(s) matched no rule and stay unorganized.'
+      : 'Every scanned email matched a rule.';
+    const entries = Object.values(state.lastScan.matches);
+    const box = document.getElementById('preview-breakdown');
+    if (!entries.length) {
+      box.innerHTML = `<div class="col-span-2 text-center text-sm text-gray-400 py-8">No rules matched any of the scanned emails.</div>`;
+    } else {
+      const colors = ['border-green-500 text-green-600', 'border-blue-500 text-blue-600', 'border-amber-500 text-amber-600', 'border-purple-500 text-purple-600'];
+      box.innerHTML = entries.map((m, i) => {
+        const icon = ACTION_ICONS[m.rule.actions[0]?.type] || 'rule';
+        const cls = colors[i % colors.length];
+        return `
+        <div class="p-4 bg-white border-l-4 ${cls.split(' ')[0]} rounded-lg border border-[#d8dadb]">
+          <div class="flex justify-between items-start mb-4">
+            <span class="material-symbols-outlined ${cls.split(' ')[1]}">${icon}</span>
+            <span class="font-bold text-lg">${m.emailIds.length}</span>
+          </div>
+          <div class="text-sm font-bold">${escapeHtml(m.rule.name)}</div>
+          <div class="text-xs text-gray-500">${summarizeActions(m.rule, m.emailIds.length)}</div>
+        </div>`;
+      }).join('');
+    }
+  }
+
+  function renderLogs() {
+    const box = document.getElementById('logs-list');
+    const empty = document.getElementById('logs-empty');
+    if (!state.logs.length) {
+      box.innerHTML = '';
+      empty.classList.remove('hidden');
+      return;
+    }
+    empty.classList.add('hidden');
+    box.innerHTML = state.logs.map(l => `
+      <div class="p-4 bg-white border-l-4 ${l.undone ? 'border-gray-300' : 'border-blue-600'} rounded-lg border border-[#d8dadb] shadow-sm ${l.undone ? 'log-undone' : ''}">
+        <div class="flex items-center gap-3 mb-3">
+          <div class="w-12 h-12 ${l.undone ? 'bg-gray-50' : 'bg-blue-50'} rounded-lg flex items-center justify-center">
+            <span class="material-symbols-outlined ${l.undone ? 'text-gray-500' : 'text-blue-600'}">${l.undone ? 'undo' : 'bolt'}</span>
+          </div>
+          <div class="flex-1">
+            <div class="text-lg font-bold">${escapeHtml(l.summary)}</div>
+            <div class="flex items-center gap-4 text-xs text-gray-500 mt-1">
+              <span class="flex items-center gap-1"><span class="material-symbols-outlined text-xs">schedule</span> ${timeAgo(l.timestamp)}</span>
+              <span class="flex items-center gap-1"><span class="material-symbols-outlined text-xs">schema</span> Rule: ${escapeHtml(l.ruleName)}</span>
+            </div>
+          </div>
+        </div>
+        ${l.undone
+          ? `<div class="w-full py-2 text-center text-xs font-medium text-gray-400">Undone</div>`
+          : `<button class="w-full py-2 bg-white border border-[#d8dadb] rounded text-blue-600 text-sm font-medium flex items-center justify-center gap-2 active:bg-gray-50" onclick="App.undoLog('${l.id}')">
+              <span class="material-symbols-outlined text-sm">undo</span> Undo
+            </button>`}
+      </div>`).join('');
+  }
+
+  function timeAgo(ts) {
+    const mins = Math.floor((Date.now() - ts) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + 'm ago';
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return hrs + 'h ago';
+    return Math.floor(hrs / 24) + 'd ago';
+  }
+
+  function escapeHtml(str) {
+    return (str || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function renderConnBadge() {
+    const badge = document.getElementById('conn-badge');
+    const btn = document.getElementById('gmail-toggle-btn');
+    if (state.mode === 'gmail') {
+      badge.textContent = state.gmail.connectedEmail || 'Gmail Connected';
+      badge.className = 'text-[10px] font-bold uppercase tracking-wide text-green-700 bg-green-100 px-2 py-1 rounded-full';
+      btn.textContent = 'Disconnect';
+    } else {
+      badge.textContent = 'Demo data';
+      badge.className = 'text-[10px] font-bold uppercase tracking-wide text-amber-700 bg-amber-100 px-2 py-1 rounded-full';
+      btn.textContent = 'Connect Gmail';
+    }
+  }
+
+  function render() {
+    renderConnBadge();
+    renderDashboard();
+    renderRulesList();
+    renderPreview();
+    renderLogs();
+  }
+
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.remove('opacity-0', 'translate-y-[-8px]');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.add('opacity-0', 'translate-y-[-8px]'), 2200);
+  }
+
+  // ---------- Rule editor ----------
+  function newRule() {
+    editingRuleId = null;
+    draftRule = { name: '', priority: 'Normal', enabled: true, conditionLogic: 'all', conditions: [{ field: 'sender', operator: 'contains', value: '' }], actions: [{ type: 'label', value: '' }] };
+    openEditor('New Rule');
+  }
+
+  function editRule(id) {
+    const r = state.rules.find(r => r.id === id);
+    if (!r) return;
+    editingRuleId = id;
+    draftRule = JSON.parse(JSON.stringify(r));
+    openEditor('Edit Rule');
+  }
+
+  function openEditor(title) {
+    document.getElementById('rule-editor-title').textContent = title;
+    document.getElementById('rule-name-input').value = draftRule.name;
+    document.getElementById('rules-list-view').classList.add('hidden');
+    document.getElementById('rule-editor-view').classList.remove('hidden');
+    renderPriorityRadios();
+    renderConditionLogic();
+    renderConditions();
+    renderActions();
+  }
+
+  function renderConditionLogic() {
+    const box = document.getElementById('rule-condition-logic');
+    if (!draftRule.conditionLogic) draftRule.conditionLogic = 'all';
+    const opts = [
+      { v: 'all', label: 'Match ALL conditions' },
+      { v: 'any', label: 'Match ANY condition' }
+    ];
+    box.innerHTML = 'Require: ' + opts.map(o => `
+      <label class="inline-flex items-center gap-1 ml-2">
+        <input type="radio" name="cond-logic" value="${o.v}" ${draftRule.conditionLogic === o.v ? 'checked' : ''} onchange="App.setDraftConditionLogic('${o.v}')"/> ${o.label}
+      </label>`).join('');
+  }
+
+  function setDraftConditionLogic(v) { draftRule.conditionLogic = v; }
+
+  function cancelRuleEdit() {
+    draftRule = null;
+    editingRuleId = null;
+    document.getElementById('rule-editor-view').classList.add('hidden');
+    document.getElementById('rules-list-view').classList.remove('hidden');
+  }
+
+  function renderPriorityRadios() {
+    const box = document.getElementById('rule-priority-radios');
+    box.innerHTML = ['High', 'Normal', 'Low'].map(p => `
+      <label class="flex items-center gap-2 text-sm">
+        <input type="radio" name="priority" value="${p}" ${draftRule.priority === p ? 'checked' : ''} onchange="App.setDraftPriority('${p}')"/> ${p}
+      </label>`).join('');
+  }
+
+  function setDraftPriority(p) { draftRule.priority = p; }
+
+  function renderConditions() {
+    const box = document.getElementById('rule-conditions');
+    box.innerHTML = draftRule.conditions.map((c, i) => `
+      <div class="p-4 bg-white border-l-4 border-blue-600 rounded-lg border border-[#d8dadb] space-y-3">
+        <div class="flex items-center gap-2">
+          <select class="flex-1 p-2 bg-white border border-[#d8dadb] rounded text-sm" onchange="App.updateCondition(${i}, 'field', this.value)">
+            ${Object.entries(FIELD_LABELS).map(([k, v]) => `<option value="${k}" ${c.field === k ? 'selected' : ''}>${v}</option>`).join('')}
+          </select>
+          ${draftRule.conditions.length > 1 ? `<button class="text-gray-400" onclick="App.removeCondition(${i})"><span class="material-symbols-outlined text-base">close</span></button>` : ''}
+        </div>
+        <select class="w-full p-2 bg-white border border-[#d8dadb] rounded text-sm" onchange="App.updateCondition(${i}, 'operator', this.value)">
+          ${Object.entries(OPERATOR_LABELS).map(([k, v]) => `<option value="${k}" ${c.operator === k ? 'selected' : ''}>${v}</option>`).join('')}
+        </select>
+        <input class="w-full p-2 bg-white border border-[#d8dadb] rounded text-sm" type="text" placeholder="value" value="${escapeHtml(c.value)}" oninput="App.updateCondition(${i}, 'value', this.value)"/>
+      </div>`).join('');
+  }
+
+  function addCondition() { draftRule.conditions.push({ field: 'sender', operator: 'contains', value: '' }); renderConditions(); }
+  function removeCondition(i) { draftRule.conditions.splice(i, 1); renderConditions(); }
+  function updateCondition(i, key, val) { draftRule.conditions[i][key] = val; }
+
+  function renderActions() {
+    const box = document.getElementById('rule-actions');
+    box.innerHTML = draftRule.actions.map((a, i) => `
+      <div class="p-4 bg-white border-l-4 border-gray-600 rounded-lg border border-[#d8dadb] space-y-3">
+        <div class="flex items-center gap-2">
+          <select class="flex-1 p-2 bg-white border border-[#d8dadb] rounded text-sm" onchange="App.updateActionType(${i}, this.value)">
+            ${Object.entries(ACTION_LABELS).map(([k, v]) => `<option value="${k}" ${a.type === k ? 'selected' : ''}>${v}</option>`).join('')}
+          </select>
+          ${draftRule.actions.length > 1 ? `<button class="text-gray-400" onclick="App.removeAction(${i})"><span class="material-symbols-outlined text-base">close</span></button>` : ''}
+        </div>
+        ${a.type === 'label' ? `<input class="w-full p-2 bg-white border border-[#d8dadb] rounded text-sm" type="text" placeholder="Label name" value="${escapeHtml(a.value || '')}" oninput="App.updateActionValue(${i}, this.value)"/>` : ''}
+      </div>`).join('');
+  }
+
+  function addAction() { draftRule.actions.push({ type: 'label', value: '' }); renderActions(); }
+  function removeAction(i) { draftRule.actions.splice(i, 1); renderActions(); }
+  function updateActionType(i, val) { draftRule.actions[i].type = val; if (val !== 'label') delete draftRule.actions[i].value; renderActions(); }
+  function updateActionValue(i, val) { draftRule.actions[i].value = val; }
+
+  function saveRule() {
+    draftRule.name = document.getElementById('rule-name-input').value.trim();
+    if (!draftRule.name) { showToast('Give the rule a name'); return; }
+    const validConditions = draftRule.conditions.filter(c => c.value.trim().length > 0);
+    if (!validConditions.length) { showToast('Add at least one condition with a value'); return; }
+    draftRule.conditions = validConditions;
+    draftRule.actions = draftRule.actions.filter(a => a.type !== 'label' || (a.value && a.value.trim().length > 0));
+    if (!draftRule.actions.length) { showToast('Add at least one action'); return; }
+
+    if (editingRuleId) {
+      const idx = state.rules.findIndex(r => r.id === editingRuleId);
+      state.rules[idx] = { ...draftRule, id: editingRuleId };
+    } else {
+      state.rules.push({ ...draftRule, id: uid('rule') });
+    }
+    saveState();
+    cancelRuleEdit();
+    render();
+    showToast('Rule saved');
+  }
+
+  function toggleRule(id) {
+    const r = state.rules.find(r => r.id === id);
+    if (!r) return;
+    r.enabled = !r.enabled;
+    saveState();
+    renderRulesList();
+  }
+
+  function deleteRule(id) {
+    const r = state.rules.find(r => r.id === id);
+    if (!r) return;
+    if (!confirm(`Delete "${r.name}"? This can't be undone.`)) return;
+    state.rules = state.rules.filter(r => r.id !== id);
+    saveState();
+    renderRulesList();
+    showToast('Rule deleted');
+  }
+
+  // ---------- Scan flow ----------
+  function scanGmail() {
+    if (state.mode === 'gmail') { scanGmailLive(); return; }
+    const icon = document.getElementById('scan-icon');
+    const label = document.getElementById('scan-label');
+    const btn = document.getElementById('scan-btn');
+    btn.disabled = true;
+    icon.classList.add('animate-spin');
+    label.textContent = 'Scanning…';
+    setTimeout(() => {
+      const pulled = runScan();
+      icon.classList.remove('animate-spin');
+      label.textContent = 'Scan Gmail';
+      btn.disabled = false;
+      saveState();
+      render();
+      showScreen('preview');
+      showToast(pulled > 0 ? pulled + ' new email(s) found' : 'Scan complete');
+    }, 700);
+  }
+
+  async function scanGmailLive() {
+    const icon = document.getElementById('scan-icon');
+    const label = document.getElementById('scan-label');
+    const btn = document.getElementById('scan-btn');
+    btn.disabled = true;
+    icon.classList.add('animate-spin');
+    label.textContent = 'Scanning…';
+    try {
+      await runScanGmail();
+      render();
+      showScreen('preview');
+      showToast(state.lastScan.candidateCount + ' inbox email(s) scanned');
+    } catch (e) {
+      console.error(e);
+      showToast('Gmail scan failed: ' + (e.message || 'unknown error'));
+    } finally {
+      icon.classList.remove('animate-spin');
+      label.textContent = 'Scan Gmail';
+      btn.disabled = false;
+    }
+  }
+
+  function cancelPreview() {
+    state.lastScan = null;
+    render();
+    showScreen('dashboard');
+  }
+
+  // ---------- Navigation ----------
+  function showScreen(screenId) {
+    document.querySelectorAll('main').forEach(el => el.classList.add('hidden'));
+    document.getElementById('screen-' + screenId).classList.remove('hidden');
+    document.querySelectorAll('nav button').forEach(el => {
+      el.classList.remove('active-tab');
+      el.classList.add('text-gray-500');
+    });
+    document.getElementById('nav-' + screenId).classList.add('active-tab');
+    document.getElementById('nav-' + screenId).classList.remove('text-gray-500');
+    window.scrollTo(0, 0);
+  }
+
+  async function init() {
+    await loadState();
+    render();
+    showScreen('dashboard');
+  }
+
+  return {
+    init, showScreen, scanGmail, applyAll, cancelPreview, undoLog,
+    newRule, editRule, cancelRuleEdit, saveRule, toggleRule, deleteRule,
+    addCondition, removeCondition, updateCondition, setDraftPriority, setDraftConditionLogic,
+    addAction, removeAction, updateActionType, updateActionValue,
+    gmailBadgeClick, connectGmail, disconnectGmail, openConnectModal, closeConnectModal, saveClientIdAndConnect
+  };
+})();
+
+App.init();
+</script>
+</body>
+</html>
